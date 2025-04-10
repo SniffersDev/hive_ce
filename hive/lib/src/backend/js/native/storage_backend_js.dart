@@ -234,6 +234,7 @@ class StorageBackendJs extends StorageBackend {
 
     // directly deleting the entire DB if a non-collection Box
     if (_db.objectStoreNames.length == 1) {
+      _db.close();
       await indexDB.deleteDatabase(_db.name).asFuture();
     } else {
       final request = indexDB.open(_db.name, 1);
