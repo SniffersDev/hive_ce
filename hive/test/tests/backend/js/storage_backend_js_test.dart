@@ -267,6 +267,112 @@ void main() async {
       expect(await backend.getKeys(), ['key2']);
     });
 
+    test('.writeFrames() with no frames', () async {
+      final db = await _getDbWith({'key1': 1});
+      final backend = _getBackend(db: db);
+
+      await backend.writeFrames([]);
+      expect(await backend.getKeys(), ['key1']);
+    });
+
+    test('.writeFrames() applies the frames of a batch in order', () async {
+      final db = await _getDbWith({});
+      final backend = _getBackend(db: db);
+
+      await backend.writeFrames([
+        Frame('key1', 'first'),
+        Frame('key2', 'gone'),
+        Frame('key1', 'second'),
+        Frame.deleted('key2'),
+        Frame('key3', 'third'),
+      ]);
+      expect(await backend.getKeys(), ['key1', 'key3']);
+      expect(await backend.getValues(), ['second', 'third']);
+    });
+
+    test('.writeFrames() writes a large batch', () async {
+      final db = await _getDbWith({});
+      final backend = _getBackend(db: db);
+
+      final frames = [for (var i = 0; i < 5000; i++) Frame(i, 'value $i')];
+      await backend.writeFrames(frames);
+      expect(await backend.getKeys(), [for (var i = 0; i < 5000; i++) i]);
+      expect(
+        await backend.getValues(),
+        [for (var i = 0; i < 5000; i++) 'value $i'],
+      );
+    });
+
+    group('.writeFrames() awaiting every request', () {
+      late Duration slice;
+
+      setUp(() {
+        slice = StorageBackendJs.writeSlice;
+        StorageBackendJs.writeSlice = Duration.zero;
+      });
+
+      tearDown(() => StorageBackendJs.writeSlice = slice);
+
+      test('applies the frames of a batch in order', () async {
+        final db = await _getDbWith({});
+        final backend = _getBackend(db: db);
+
+        await backend.writeFrames([
+          Frame('key1', 'first'),
+          Frame('key2', 'gone'),
+          Frame('key1', 'second'),
+          Frame.deleted('key2'),
+          Frame('key3', 'third'),
+        ]);
+        expect(await backend.getKeys(), ['key1', 'key3']);
+        expect(await backend.getValues(), ['second', 'third']);
+      });
+
+      test('keeps nothing of a batch that fails', () async {
+        final db = await _getDbWith({'key1': 'before'});
+        final backend = _getBackend(db: db);
+
+        await expectLater(
+          backend.writeFrames([
+            Frame('key1', 'replaced'),
+            Frame('key2', 'added'),
+            Frame('key3', Object()),
+            Frame('key4', 'never queued'),
+          ]),
+          throwsA(anything),
+        );
+        expect(await backend.getKeys(), ['key1']);
+        expect(await backend.getValues(), ['before']);
+
+        await backend.writeFrames([Frame('key2', 'after')]);
+        expect(await backend.getKeys(), ['key1', 'key2']);
+        expect(await backend.getValues(), ['before', 'after']);
+      });
+    });
+
+    test('.writeFrames() keeps nothing of a batch that fails', () async {
+      final db = await _getDbWith({'key1': 'before'});
+      final backend = _getBackend(db: db);
+
+      // The third frame cannot be encoded, after two frames were queued.
+      await expectLater(
+        backend.writeFrames([
+          Frame('key1', 'replaced'),
+          Frame('key2', 'added'),
+          Frame('key3', Object()),
+          Frame('key4', 'never queued'),
+        ]),
+        throwsA(anything),
+      );
+      expect(await backend.getKeys(), ['key1']);
+      expect(await backend.getValues(), ['before']);
+
+      // The backend still takes writes afterwards.
+      await backend.writeFrames([Frame('key2', 'after')]);
+      expect(await backend.getKeys(), ['key1', 'key2']);
+      expect(await backend.getValues(), ['before', 'after']);
+    });
+
     test('.compact()', () async {
       final db = await _getDbWith({});
       final backend = _getBackend(db: db);
